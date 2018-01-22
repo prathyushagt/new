@@ -11,33 +11,55 @@ import collections
 sc=SparkContext(appName="testsql")
 sqlContext = HiveContext(sc)
 #sqlContext.sql("delete from default.cTop_orders")
-result=sqlContext.sql("create table if not exists cTop_orders_new4(eventDate string, customerName string,customerCode string, orderNumber int,itemQuantity string, material string,materialcode string,materialDesc string,thickness string,orderStatus string,orderType string,installationDate string,receivedDate string,plannedCompletionDate Date,regionName string) row format delimited fields terminated by '|' stored as textfile location 'hdfs://cy1-hdoop-master:9000/ctop_mo_event'")
+#result=sqlContext.sql("create table if not exists cTop_orders_new4(eventDate string, customerName string,customerCode string, orderNumber int,itemQuantity string, material string,materialcode string,materialDesc string,thickness string,orderStatus string,orderType string,installationDate string,receivedDate string,plannedCompletionDate Date,regionName string) row format delimited fields terminated by '|' stored as textfile location 'hdfs://cy1-hdoop-master:9000/ctop_mo_event'")
 results=sqlContext.sql("select * from cTop_orders_new4").collect()
 ######calculate the number of orders for each Day
+daterange = pd.date_range('2017-01-01','2017-12-31')
+new_array = list(daterange)
+len_array = len(new_array)
+i = 0
+cal_days_list = []
+while i < 365:
+    a = str(new_array[i])[0:10]
+    order_status = ['Accepted','Cancelled','Fabricated','Shipped']
+    order_type = ['Production','Rework','Color Match','Remake']
+    var = 0
+    while var < 4:
+      for s in order_type:
+          d=collections.OrderedDict()
+          d['eventDay'] = a
+          d['status'] = order_status[var]
+          d['type'] = s
+          cal_days_list.append(d)
+      var = var + 1
+    i = i + 1
+j_c = json.dumps(cal_days_list)
+df_cal_days_list = pd.read_json(j_c)
 rowarray_list=[]
 for row in results:
-    chk_orderType = str(row.orderType)
-    chk_var = str(row.installationDate)
-    if chk_orderType.lower() == 'sample':
-      print("ignored recs with Sample order type")
-    else:
-      if row.orderNumber == '' or row.orderNumber == ' ' or row.orderNumber is None:
-         orderNo = 0
-      else:
-         orderNo = row.orderNumber
-      if row.itemQuantity == '' or row.orderNumber == ' ':
-         Sqft = 0
-      else:
-         Sqft = float(row.itemQuantity.encode('ascii','ignore'))
-      Sqrft = int(Sqft)
-      d=collections.OrderedDict()
-      d['eventDay']=row.eventDate[0:10]
-      d['orderNumber']=int(orderNo)
-      d['Sqrft']=Sqrft
-      d['orderStatus']=row.orderStatus
-      d['orderType']=row.orderType
+     chk_orderType = str(row.orderType)
+     chk_var = str(row.installationDate)
+     if chk_orderType.lower() == 'sample':
+         pass
+#        print("ignored recs with Sample order type")
+     else:
+        if row.orderNumber == '' or row.orderNumber == ' ' or row.orderNumber is None:
+           orderNo = 0
+        else:
+           orderNo = row.orderNumber
+        if row.itemQuantity == '' or row.orderNumber == ' ':
+           Sqft = 0
+        else:
+           Sqft = float(row.itemQuantity.encode('ascii','ignore'))
+        Sqrft = int(Sqft)
+        d=collections.OrderedDict()
+        d['eventDay']=row.eventDate[0:10]
+        d['orderNumber']=int(orderNo)
+        d['Sqrft']=Sqrft
+        d['orderStatus']=row.orderStatus
+        d['orderType']=row.orderType
 #    eventDay = [row.eventDate[0:10],row.orderNumber,Sqrft,row.orderStatus,row.orderType]
-      rowarray_list.append(d)
+        rowarray_list.append(d)
 j=json.dumps(rowarray_list)
 df = pd.read_json(j)
 ######################################################
@@ -58,19 +80,47 @@ orders_Sqrft = pd.DataFrame(orders_Sqft.to_records())
 orders_Sqrft_new = pd.concat([num_of_orders_with_zero,orders_Sqrft])
 final_orders_Sqrft = orders_Sqrft_new.rename(index=str,columns={"orderStatus":"status","orderType":"type","orderNumber":"orders","Sqrft":"sqFt"})
 final_orders_Sqrft = final_orders_Sqrft[['eventDay','status','type','orders','sqFt']]
-json_orders_daily = final_orders_Sqrft.to_json(orient='records')
+############################################################
+######## new code is being added here    ###################
+############################################################
+new_frame = pd.merge(df_cal_days_list, final_orders_Sqrft,on=['eventDay','status','type'],how='left')
+fill_zero = int(0)
+new_frame = new_frame.fillna(fill_zero)
+new_frame[['orders','sqFt']] = new_frame[['orders','sqFt']].astype(int)
+json_orders_daily = new_frame.to_json(orient='records')
 file_orders_daily = '/home/prathyushag/Downloads/orders_daily'
 f = open(file_orders_daily,'w')
 print>>f,json_orders_daily
 #######################################################
 #### Region                                       #####
 #######################################################
+cal_days_region = []
+i = 0
+while i < 365:
+    a = str(new_array[i])[0:10]
+    order_status = ['Accepted','Cancelled','Fabricated','Shipped']
+    order_region = ['Austin','Dallas','Houston','San Antonio']
+    var = 0
+    while var < 4:
+      for s in order_region:
+          d=collections.OrderedDict()
+          d['eventDay'] = a
+          d['status'] = order_status[var]
+          d['region'] = s
+          cal_days_region.append(d)
+      var = var + 1
+    i = i + 1
+j4 = json.dumps(cal_days_region)
+df_cal_days_region = pd.read_json(j4)
+df_cal_days_region = df_cal_days_region[['eventDay','status','region']]
+#print(df_cal_days_region)
 rowarray_list1=[]
 for row in results:
     chk_orderType = str(row.orderType)
     chk_var = str(row.installationDate)
     if chk_orderType.lower() == 'sample':
-      print("ignored recs with sample")
+       pass
+#      print("ignored recs with sample")
     else:
       if row.orderNumber == '' or row.orderNumber == ' ' or row.orderNumber is None:
          orderNo = 0
@@ -102,7 +152,11 @@ rgn_orders_Sqrft = pd.DataFrame(rgn_orders_itemQuantity.to_records())
 rgn_orders_Sqrft_new = pd.concat([num_of_orders_region_with_zero,rgn_orders_Sqrft])
 final_rgn_orders_Sqrft = rgn_orders_Sqrft_new.rename(index=str,columns={"orderStatus":"status","regionName":"region","orderNumber":"orders","Sqrft":"sqFt"})
 final_rgn_orders_Sqrft = final_rgn_orders_Sqrft[['eventDay','status','region','orders','sqFt']]
-json_orders_region = final_rgn_orders_Sqrft.to_json(orient='records')
+new_frame_r = pd.merge(df_cal_days_region, final_rgn_orders_Sqrft,on=['eventDay','status','region'],how='left')
+fill_zero = int(0)
+new_frame_r = new_frame_r.fillna(fill_zero)
+new_frame_r[['orders','sqFt']] = new_frame_r[['orders','sqFt']].astype(int)
+json_orders_region = new_frame_r.to_json(orient='records')
 file_orders_region = '/home/prathyushag/Downloads/orders_region'
 f = open(file_orders_region,'w')
 print>>f,json_orders_region
@@ -114,7 +168,8 @@ for row in results:
     chk_var = str(row.installationDate)
     chk_orderType = str(row.orderType)
     if chk_orderType.lower() == 'sample' or chk_var == '1900-01-01':
-      print("ignored rec with 1900-01-01")
+       pass
+#      print("ignored rec with 1900-01-01")
     else:
       Sqft = float(row.itemQuantity.encode('ascii','ignore'))
       Sqrft = int(Sqft)
@@ -159,7 +214,8 @@ for row in results:
     chk_orderType = str(row.orderType)
     chk_var = str(row.installationDate)
     if chk_orderType.lower() == 'sample' or row.material == '':
-      print("do nothing")
+       pass
+#      print("do nothing")
     else:
       Sqft = float(row.itemQuantity.encode('ascii','ignore'))
       Sqrft = int(Sqft)
